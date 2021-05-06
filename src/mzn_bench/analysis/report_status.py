@@ -5,7 +5,8 @@ from tabulate import tabulate
 
 
 def report_status(
-    per_problem: bool, per_model: bool, per_instance: bool, statistics: Path, avg_key: str, tablefmt: str
+    per_problem: bool, per_model: bool, per_instance: bool, statistics: Path, avg: str, tablefmt: str
+>>>>>>> feature/add-support-for-time-stat-in-avg
 ):
     keys = ["configuration"]
     
@@ -34,6 +35,7 @@ def report_status(
 
             seen_status.add(row["status"])
             key = tuple(key)
+
             avg_value = row.get(avg, 0)
             time = float(0 if avg_value == "" else avg_value)
             if key not in table:

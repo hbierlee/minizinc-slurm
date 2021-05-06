@@ -85,7 +85,11 @@ class SolItem(pytest.Item):
         model["mzn_ignore_symmetry_breaking_constraints"] = True
         model["mzn_ignore_redundant_constraints"] = True
         if "data_file" in self.result and len(self.result["data_file"]) > 0:
-            model.add_file(self.base_dir / self.result["data_file"])
+            data=self.result["data_file"]
+            if data[-4] == ".dzn":
+                model.add_file(self.base_dir / self.result["data_file"])
+            else:
+                model.add_string(data)
         status = Status[self.result["status"]]
         assert check_solution(
             model, solution, status, self.checker

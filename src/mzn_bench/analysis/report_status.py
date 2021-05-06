@@ -6,7 +6,6 @@ from tabulate import tabulate
 
 def report_status(
     per_problem: bool, per_model: bool, per_instance: bool, statistics: Path, avg: str, tablefmt: str
->>>>>>> feature/add-support-for-time-stat-in-avg
 ):
     keys = ["configuration"]
     

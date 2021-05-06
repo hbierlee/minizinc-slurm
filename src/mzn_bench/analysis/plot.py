@@ -1,18 +1,54 @@
 import math
 from itertools import cycle
 
+from pathlib import Path
 import pandas as pd
+import numpy as np
 from bokeh.models import CDSView, ColumnDataSource, GroupFilter
 from bokeh.models.annotations import Span
 from bokeh.models.ranges import FactorRange
 from bokeh.models.tools import HoverTool
 from bokeh.palettes import Palette, Spectral5
 from bokeh.plotting import Figure, figure, gridplot
-from bokeh.transform import factor_cmap
+from bokeh.transform import factor_cmap, factor_hatch, cumsum
 
+DEFAULT_CONFIG = {
+        "include_flat_time": True,
+        "x_range_start": 0.1
+        }
+
+def collect_factors(stats: pd.DataFrame, by=None):
+    if by is None:
+        if stats.configuration.nunique() == 1:
+            # Group by run only
+            by = ["run"]
+        elif stats.run.nunique() == 1:
+            # Group by configuration only
+            by = ["configuration"]
+        else:
+            # Group by both
+            by = ["configuration", "run"]
+    
+    if by == ["run"]:
+        factors = stats.run.unique()
+    elif by == ["configuration"]:
+        factors = stats.configuration.unique()
+    elif by == ["configuration","run"]:
+        factors = [
+            (c, r)
+            for c in stats.configuration.unique()
+            for r in stats.run.unique()
+        ]
+    else:
+        raise RuntimeError("Given `by` argument wasn't a valid grouping")
+
+    return (factors, by)
 
 def plot_all_instances(
-    sols: pd.DataFrame, stats: pd.DataFrame, palette: Palette = Spectral5
+        sols: pd.DataFrame,
+        stats: pd.DataFrame,
+        palette: Palette = Spectral5,
+        config: dict = DEFAULT_CONFIG,
 ) -> Figure:
     """Plot all instances in a grid
 
@@ -24,30 +60,109 @@ def plot_all_instances(
     Returns:
         Figure: The plotting figure
     """
-    return gridplot(
+    factors,by=collect_factors(stats)
+    configurations,_=collect_factors(stats, by=["configuration"])
+
+    return gridplot([
         [
-            [
-                plot_instance(
-                    sols,
-                    stats,
-                    model,
-                    data,
-                    palette,
-                )
-                for model in stats[stats.problem.eq(problem)].model.unique()
-                for data in stats[stats.problem.eq(problem)].data_file.unique()
+            plot_comparison(
+                sols,
+                stats,
+                problem,
+                model,
+                palette,
+                ),
+            *[ plot_instance(
+                sols,
+                stats,
+                problem,
+                model,
+                data,
+                palette,
+                configurations=configurations,
+                factors=factors,
+                by=by,
+                x_range_end=stats[stats.problem.eq(problem)].time.max(),
+                config=config,
+                ) for data in stats[stats.problem.eq(problem)].data_file.unique() ]
             ]
-            for problem in stats.problem.unique()
-        ]
-    )
+        for problem in stats.problem.unique()
+        for model in stats[stats.problem.eq(problem)].model.unique()
+        ])
+
+def plot_comparison(
+    sols: pd.DataFrame,
+    stats: pd.DataFrame,
+    problem: str,
+    model: str,
+    # data: str = "",
+    palette: Palette = Spectral5,
+    ) -> Figure:
+    """Plot comparison over solveTime over multiple instances"""
+    
+
+    df_stats = stats[
+        (stats.model.eq(model) | stats.problem.eq(model))
+    ]
+    df_sols = sols[
+        (sols.model.eq(model) | sols.problem.eq(model))
+    ]
+    
+
+    configurations,by=collect_factors(df_stats, by=["configuration"])
+    
+    df_stats=df_stats[df_stats.status.ne("ERROR") & df_stats.status.ne("UNKNOWN")]
+    df_stats['data_file'] = df_stats['data_file'].apply(lambda x: int(str(x).split("-")[-1][:-4]))
+    
+    source = ColumnDataSource(df_stats)
+    tooltips = [
+        ("configuration", "@configuration"),
+        ("run", "@run"),
+        ("data_file", "@data_file"),
+        ("solveTime", "@solveTime"),
+    ]
+
+    
+    p = figure(
+            title="Comparison for {}".format(problem),
+            # x_axis_type="log",
+            # y_axis_type="log",
+            )
+
+    colors = cycle(palette)
+    for configuration in configurations:
+        view = CDSView(
+                source=source,
+                filters=[
+                    GroupFilter(column_name="configuration", group=configuration),
+                    ],
+                )
+        color=next(colors)
+        glyph = p.circle(
+                x="data_file",
+                y=cumsum("solveTime", include_zero=True),
+                color=color,
+                legend_label=configuration,
+                source=source,
+                view=view,
+            )
+        p.add_tools(HoverTool(renderers=[glyph], tooltips=tooltips))
+
+    return p
 
 
 def plot_instance(
     sols: pd.DataFrame,
     stats: pd.DataFrame,
+    problem: str,
     model: str,
     data: str = "",
     palette: Palette = Spectral5,
+    configurations: list = None,
+    factors: list = None,
+    by: tuple = None,
+    x_range_end: float = None,
+    config: dict = DEFAULT_CONFIG
 ) -> Figure:
     """Plots objective data for an optimisation problem instance, and run time
        data for a satisfaction problem instance.
@@ -69,35 +184,21 @@ def plot_instance(
         (sols.model.eq(model) | sols.problem.eq(model)) & sols.data_file.eq(data)
     ]
     if df_stats.data_file.nunique() != 1:
-        print(stats[stats.model.eq(model)])
         raise ValueError("Could not determine unique instance for plotting.")
 
     instance = "{} ({})".format(
         df_stats.problem.iloc[0],
-        df_stats.model.iloc[0]
-        if df_stats.data_file.iloc[0] == ""
-        else df_stats.data_file.iloc[0],
+        Path(df_stats.model.iloc[0] if df_stats.data_file.iloc[0] == "" else df_stats.data_file.iloc[0]).name,
     )
 
-    if df_stats.method.eq("satisfy").any() or df_sols.empty:
-        # Plot run time graph
-        if df_stats.configuration.nunique() == 1:
-            # Group by run only
-            y = df_stats.run.unique()
-            by = ["run"]
-        elif df_stats.run.nunique() == 1:
-            # Group by configuration only
-            y = df_stats.configuration.unique()
-            by = ["configuration"]
-        else:
-            # Group by both
-            y = [
-                (c, r)
-                for c in df_stats.configuration.unique()
-                for r in df_stats.run.unique()
-            ]
-            by = ["configuration", "run"]
+    if x_range_end is None:
+        x_range_end = df_stats.time.max()
 
+    if df_stats.method.eq("satisfy").any() or df_sols.empty:
+        if factors is None:
+            factors,by=collect_factors(stats)
+
+        # Plot run time graph
         tooltips = [
             ("configuration", "@" + "_".join(by)),
             ("flatTime", "@flatTime"),
@@ -107,29 +208,39 @@ def plot_instance(
         ]
         source = ColumnDataSource(df_stats.groupby(by=by).first())
         p = figure(
-            y_range=FactorRange(*y),
+            y_range=FactorRange(*factors),
             title="Run time for {}".format(instance),
             tooltips=tooltips,
         )
         p.hbar(
             y="_".join(by),
-            left="flatTime",
-            right="time",
+            left="flatTime" if config["include_flat_time"] else config["x_range_start"],
+            right="time" if config["include_flat_time"] else "solveTime",
             height=0.5,
             fill_color=factor_cmap(
                 "_".join(by),
                 palette=palette,
-                factors=df_stats[by[-1]].unique(),
+                factors=factors,
+                start=len(by) - 1,
+            ),
+            hatch_pattern=factor_hatch(
+                "status",
+                patterns=(' ', ' ', 'x', '@'),
+                factors=("SATISFIABLE", "UNSATISFIABLE", "UNKNOWN", "ERROR"),
                 start=len(by) - 1,
             ),
             line_color=None,
             source=source,
         )
-        p.x_range.start = 0
+        p.x_range.start = config["x_range_start"] # 0.1
+        p.x_range.end = x_range_end
         p.xaxis.axis_label = "Time (s)"
         p.yaxis.axis_label = "Configuration"
         return p
     else:
+        if configurations is None:
+            configurations,_=collect_factors(stats, by=["configurations"])
+            
         # Plot objective graph
         source = ColumnDataSource(df_sols)
         tooltips = [
@@ -141,7 +252,7 @@ def plot_instance(
 
         p = figure(title="Objective value for {}".format(instance))
         colors = cycle(palette)
-        for configuration in df_stats.configuration.unique():
+        for configuration in configurations:
             color = next(colors)
             dashes = cycle([[], [6], [2, 4], [2, 4, 6, 4], [6, 4, 2, 4]])
             for run, line_dash in zip(df_stats.run.unique(), dashes):
@@ -225,8 +336,8 @@ def plot_instance(
                         point_policy="follow_mouse",
                     )
                 )
-        p.x_range.start = 0
-        p.x_range.end = df_stats.time.max()
+        p.x_range.start = config["x_range_start"]
+        p.x_range.end = x_range_end
         p.xaxis.axis_label = "Time (s)"
         p.yaxis.axis_label = "Objective"
         p.legend.click_policy = "hide"

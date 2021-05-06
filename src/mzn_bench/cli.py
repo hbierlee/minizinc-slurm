@@ -197,14 +197,19 @@ def check_statuses(dir: str, pytest_args: Iterable[str]):
 
 @main.command()
 @click.option(
+    "--per-problem",
+    is_flag=True,
+    help="Create a row for every problem",
+)
+@click.option(
     "--per-model",
     is_flag=True,
     help="Create a row for every model",
 )
 @click.option(
-    "--per-problem",
+    "--per-instance",
     is_flag=True,
-    help="Create a row for every problem",
+    help="Create a row for every instance / data-file",
 )
 @click.option(
     "--avg",
@@ -221,8 +226,9 @@ def check_statuses(dir: str, pytest_args: Iterable[str]):
     "statistics", metavar="stats_file", type=click.Path(exists=True, file_okay=True)
 )
 def report_status(
-    per_model: bool,
     per_problem: bool,
+    per_model: bool,
+    per_instance: bool,
     statistics: str,
     avg: str,
     output_mode: str,
@@ -236,7 +242,7 @@ def report_status(
 
         print(
             report_status_fn(
-                per_model, per_problem, Path(statistics), avg, output_mode
+                per_problem, per_model, per_instance, Path(statistics), avg, output_mode
             )
         )
     except ImportError:

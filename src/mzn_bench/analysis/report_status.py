@@ -5,7 +5,7 @@ from tabulate import tabulate
 
 
 def report_status(
-        per_model: bool, per_problem: bool, statistics: Path, avg: str, tablefmt: str
+    per_problem: bool, per_model: bool, per_instance: bool, statistics: Path, avg_key: str, tablefmt: str
 ):
     keys = ["configuration"]
     
@@ -13,6 +13,11 @@ def report_status(
         keys.append("model")
     if per_problem:
         keys.append("problem")
+    if per_model:
+        keys.append("model")
+    if per_instance:
+        keys.append("instance")
+
 
     seen_status = set()
     table = {}
@@ -24,6 +29,8 @@ def report_status(
                 key.append(row["model"])
             if per_problem:
                 key.append(row["problem"])
+            if per_instance:
+                key.append(Path(row["data_file"]).name)
 
             seen_status.add(row["status"])
             key = tuple(key)
